@@ -59,6 +59,17 @@ class TestModel(BaseModel):
         """
         self.real = input['A'].to(self.device)
         self.image_paths = input['A_paths']
+    
+    def update_T(self, T):
+        """Update the damping constant on the perturbations.
+
+        Parameters
+        ----------
+        T : float
+            A number in domain [0, 1]. Higher values indicate stronger
+            perturbations.
+        """
+        self.netG.update_T(T)
 
     def forward(self):
         """Run forward pass."""

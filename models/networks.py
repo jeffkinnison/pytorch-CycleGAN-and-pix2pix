@@ -4,6 +4,8 @@ from torch.nn import init
 import functools
 from torch.optim import lr_scheduler
 
+from .forward_perturbation import PerturbationModule, PerturbationUnit
+
 
 ###############################################################################
 # Helper Functions
@@ -318,7 +320,7 @@ class ResnetGenerator(nn.Module):
     We adapt Torch code and idea from Justin Johnson's neural style transfer project(https://github.com/jcjohnson/fast-neural-style)
     """
 
-    def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=6, padding_type='reflect'):
+    def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=6, padding_type='reflect', T=0.1):
         """Construct a Resnet-based generator
 
         Parameters:
@@ -368,6 +370,21 @@ class ResnetGenerator(nn.Module):
 
         self.model = nn.Sequential(*model)
 
+    def update_T(self, T):
+        """Update the damping constant on the perturbations.
+
+        Parameters
+        ----------
+        T : float
+            A number in domain [0, 1]. Higher values indicate stronger
+            perturbations.
+        """
+        for m in self.model._modules.values():
+            if isinstance(m, ResnetBlock):
+                m.update_T(T)
+            elif isinstance(m, PerturbationModule):
+                m.T = T
+
     def forward(self, input):
         """Standard forward"""
         return self.model(input)
@@ -376,7 +393,7 @@ class ResnetGenerator(nn.Module):
 class ResnetBlock(nn.Module):
     """Define a Resnet block"""
 
-    def __init__(self, dim, padding_type, norm_layer, use_dropout, use_bias):
+    def __init__(self, dim, padding_type, norm_layer, use_dropout, use_bias, T=0.1):
         """Initialize the Resnet block
 
         A resnet block is a conv block with skip connections
@@ -385,9 +402,9 @@ class ResnetBlock(nn.Module):
         Original Resnet paper: https://arxiv.org/pdf/1512.03385.pdf
         """
         super(ResnetBlock, self).__init__()
-        self.conv_block = self.build_conv_block(dim, padding_type, norm_layer, use_dropout, use_bias)
+        self.conv_block = self.build_conv_block(dim, padding_type, norm_layer, use_dropout, use_bias, T)
 
-    def build_conv_block(self, dim, padding_type, norm_layer, use_dropout, use_bias):
+    def build_conv_block(self, dim, padding_type, norm_layer, use_dropout, use_bias, T):
         """Construct a convolutional block.
 
         Parameters:
@@ -426,6 +443,19 @@ class ResnetBlock(nn.Module):
         conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias), norm_layer(dim)]
 
         return nn.Sequential(*conv_block)
+    
+    def update_T(self, T):
+        """Update the damping constant on the perturbations.
+
+        Parameters
+        ----------
+        T : float
+            A number in domain [0, 1]. Higher values indicate stronger
+            perturbations.
+        """
+        for m in self.conv_block._modules.values():
+            if isinstance(m, PerturbationModule):
+                m.T = T
 
     def forward(self, x):
         """Forward function (with skip connections)"""
@@ -471,7 +501,7 @@ class UnetSkipConnectionBlock(nn.Module):
         |-- downsampling -- |submodule| -- upsampling --|
     """
 
-    def __init__(self, outer_nc, inner_nc, input_nc=None,
+    def __init__(self, outer_nc, inner_nc, T=0.1, input_nc=None,
                  submodule=None, outermost=False, innermost=False, norm_layer=nn.BatchNorm2d, use_dropout=False):
         """Construct a Unet submodule with skip connections.
 

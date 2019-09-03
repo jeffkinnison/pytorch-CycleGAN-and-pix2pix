@@ -26,12 +26,38 @@ See options/base_options.py and options/test_options.py for more test options.
 See training and test tips at: https://github.com/junyanz/pytorch-CycleGAN-and-pix2pix/blob/master/docs/tips.md
 See frequently asked questions at: https://github.com/junyanz/pytorch-CycleGAN-and-pix2pix/blob/master/docs/qa.md
 """
+from collections import OrderedDict
 import os
+
+import torch.nn as nn
+
 from options.test_options import TestOptions
 from data import create_dataset
 from models import create_model
+from models.networks import ResnetBlock, ResnetGenerator
+from models.forward_perturbation import PerturbationModule
 from util.visualizer import save_images
 from util import html
+
+
+def replace_modules(model, T):
+    if isinstance(model, ResnetGenerator):
+        model._modules['model'] = replace_modules(model._modules['model'], T)
+    elif isinstance(model, ResnetBlock):
+        model._modules['conv_block'] = replace_modules(model._modules['conv_block'], T)
+    else:
+        new_modules = []
+        new_idx = 0
+
+        for key, val in model._modules.items():
+            new_modules.append((str(new_idx), val))
+            new_idx += 1
+
+            if isinstance(val, (nn.Conv2d, nn.ConvTranspose2d)):
+                new_modules.append((str(new_idx), PerturbationModule(T)))
+                new_idx += 1
+        model._modules = OrderedDict(new_modules)
+    return model
 
 
 if __name__ == '__main__':
@@ -45,6 +71,7 @@ if __name__ == '__main__':
     dataset = create_dataset(opt)  # create a dataset given opt.dataset_mode and other options
     model = create_model(opt)      # create a model given opt.model and other options
     model.setup(opt)               # regular setup: load and print networks; create schedulers
+    replace_modules(model.netG.module, 0.5)    
     # create a website
     web_dir = os.path.join(opt.results_dir, opt.name, '%s_%s' % (opt.phase, opt.epoch))  # define the website directory
     webpage = html.HTML(web_dir, 'Experiment = %s, Phase = %s, Epoch = %s' % (opt.name, opt.phase, opt.epoch))
